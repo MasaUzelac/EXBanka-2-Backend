@@ -57,6 +57,14 @@ var (
 	// perform the requested action (e.g., a client trying to cancel another
 	// user's order).
 	ErrPermissionDenied = errors.New("nemate ovlašćenje za ovu operaciju")
+
+	// ErrSettlementDatePassed is returned when a FUTURE or OPTION order is
+	// submitted after the instrument's settlement_date has expired.
+	ErrSettlementDatePassed = errors.New("datum dospeća hartije je prošao; nalog je automatski odbijen")
+
+	// ErrListingTypeNotAllowed is returned when a CLIENT tries to create an
+	// order for a listing type that is not available to clients (e.g. FOREX, OPTION).
+	ErrListingTypeNotAllowed = errors.New("klijenti mogu trgovati samo akcijama i futures-ima")
 )
 
 // ─── Enums ────────────────────────────────────────────────────────────────────

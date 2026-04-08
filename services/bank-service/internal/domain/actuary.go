@@ -15,6 +15,7 @@ var (
 	ErrActuaryAlreadyExists = errors.New("zaposleni je već registrovan kao aktuar")
 	ErrNotActuary           = errors.New("korisnik nije registrovan kao aktuar")
 	ErrNotSupervisor        = errors.New("pristup odbijen: zahteva ulogu supervizora")
+	ErrActuaryLimitExceeded = errors.New("nalog bi premašio dnevni limit agenta")
 )
 
 // ─── Tipovi ───────────────────────────────────────────────────────────────────
@@ -92,6 +93,13 @@ type ActuaryRepository interface {
 
 	// ResetAllUsedLimits atomski resetuje used_limit na '0.00' za sve agente (actuary_type = 'AGENT').
 	ResetAllUsedLimits(ctx context.Context) error
+
+	// IncrementUsedLimitIfWithin atomski povećava used_limit za agenta za dati iznos,
+	// ALI SAMO ako (used_limit + amount) <= limit.
+	// Vraća ažurirani Actuary i nil ako je operacija uspela.
+	// Vraća (nil, ErrActuaryLimitExceeded) ako bi iznos premašio dnevni limit.
+	// Ovo eliminuje TOCTOU race condition koji bi nastao pri odvojenom čitanju i pisanju.
+	IncrementUsedLimitIfWithin(ctx context.Context, employeeID int64, amount decimal.Decimal) (*Actuary, error)
 }
 
 // ─── Service interfejs ────────────────────────────────────────────────────────

@@ -48,18 +48,19 @@ type ListingDailyPriceInfo struct {
 
 // ListingFilter definiše parametre za filtriranje i paginaciju liste hartija.
 type ListingFilter struct {
-	ListingType    string
-	Search         string
-	MinPrice       *float64
-	MaxPrice       *float64
-	MinVolume      *int64
-	MaxVolume      *int64
-	SettlementFrom string // YYYY-MM-DD, iz details_json za FUTURE/OPTION
-	SettlementTo   string
-	SortBy         string // "price" | "volume" | "change" | "ticker"
-	SortOrder      string // "ASC" | "DESC"
-	Page           int32
-	PageSize       int32
+	ListingType         string
+	AllowedListingTypes []string // ako je neprazno, ograničava rezultate samo na navedene tipove (npr. za klijente)
+	Search              string
+	MinPrice            *float64
+	MaxPrice            *float64
+	MinVolume           *int64
+	MaxVolume           *int64
+	SettlementFrom      string // YYYY-MM-DD, iz details_json za FUTURE/OPTION
+	SettlementTo        string
+	SortBy              string // "price" | "volume" | "change" | "ticker"
+	SortOrder           string // "ASC" | "DESC"
+	Page                int32
+	PageSize            int32
 }
 
 // ListingCalculated sadrži izvedene finansijske vrednosti izračunate u servisnom sloju.

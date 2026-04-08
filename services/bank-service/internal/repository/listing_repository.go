@@ -92,6 +92,9 @@ func (r *listingRepository) List(ctx context.Context, filter domain.ListingFilte
 	if filter.ListingType != "" {
 		q = q.Where("listing_type = ?", filter.ListingType)
 	}
+	if len(filter.AllowedListingTypes) > 0 {
+		q = q.Where("listing_type IN ?", filter.AllowedListingTypes)
+	}
 
 	if filter.Search != "" {
 		like := "%" + strings.ToLower(filter.Search) + "%"

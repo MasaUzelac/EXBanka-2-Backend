@@ -178,7 +178,7 @@ func main() {
 
 	orderRepo := repository.NewOrderRepository(db)
 	marginChecker := repository.NewMarginChecker(db)
-	fundsManager := repository.NewFundsManager(db)
+	fundsManager := repository.NewFundsManager(db, exchangeService)
 	tradingService := trading.NewTradingService(orderRepo, listingService, actuaryRepo, marginChecker, fundsManager)
 
 	// ── Trading engine (async order execution) ────────────────────────────────
@@ -193,6 +193,10 @@ func main() {
 	exchangeRateHandler := handler.NewExchangeRateHandler(exchangeService, cfg.JWTAccessSecret)
 	karticaRequestHandler := handler.NewKarticaRequestHandler(karticaService, userClient, cfg.JWTAccessSecret, accountPublisher)
 	klientKarticeHandler := handler.NewKlientKarticeHandler(karticaService, cfg.JWTAccessSecret)
+
+	portfolioHandler := handler.NewPortfolioHandler(db, listingService, cfg.JWTAccessSecret)
+	taxHandler := handler.NewTaxHandler(db, exchangeService, cfg.JWTAccessSecret)
+	fundHandler := handler.NewFundHandler(db, exchangeService, cfg.JWTAccessSecret)
 
 	// ── 4. Auth interceptor ──────────────────────────────────────────────────
 	// Sve rute zahtevaju validan JWT access token osim gRPC health check-a.
@@ -259,7 +263,11 @@ func main() {
 	httpMux.Handle("GET /bank/cards/my", klientKarticeHandler)                  // GET  /bank/cards/my (klijentske kartice)
 	httpMux.Handle("PATCH /bank/cards/{id}/block", klientKarticeHandler)        // PATCH /bank/cards/{id}/block (blokiranje)
 	httpMux.Handle("/bank/internal/actuary/", internalActuaryHandler)           // POST/DELETE — user-service interni pozivi
-	httpMux.Handle("/", gwMux)                                                 // sve ostalo → gRPC-Gateway
+	httpMux.Handle("/bank/portfolio/", portfolioHandler)                        // GET /bank/portfolio/my, POST /bank/portfolio/publish, POST /bank/portfolio/exercise
+	httpMux.Handle("/bank/tax/", taxHandler)                                    // GET /bank/tax/users, POST /bank/tax/calculate
+	httpMux.Handle("/bank/funds/", fundHandler)                                 // GET /bank/funds, POST /bank/funds/{id}/invest, POST /bank/funds/{id}/withdraw
+	httpMux.Handle("/bank/funds", fundHandler)                                  // GET /bank/funds (without trailing slash)
+	httpMux.Handle("/", gwMux)                                                  // sve ostalo → gRPC-Gateway
 
 	gatewaySrv := &http.Server{
 		Addr:         cfg.HTTPAddr,

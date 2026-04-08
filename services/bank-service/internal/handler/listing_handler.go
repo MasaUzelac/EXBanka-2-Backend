@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pb "banka-backend/proto/banka"
+	auth "banka-backend/shared/auth"
 	"banka-backend/services/bank-service/internal/domain"
 
 	"google.golang.org/grpc/codes"
@@ -18,6 +19,8 @@ func (h *BankHandler) GetListings(ctx context.Context, req *pb.GetListingsReques
 	if err := requireClientOrEmployee(ctx); err != nil {
 		return nil, err
 	}
+
+	claims, _ := auth.ClaimsFromContext(ctx)
 
 	var minPrice *float64
 	if req.GetMinPrice() > 0 {
@@ -41,18 +44,26 @@ func (h *BankHandler) GetListings(ctx context.Context, req *pb.GetListingsReques
 	}
 
 	filter := domain.ListingFilter{
-		ListingType:     req.GetListingType(),
-		Search:          req.GetSearch(),
-		MinPrice:        minPrice,
-		MaxPrice:        maxPrice,
-		MinVolume:       minVolume,
-		MaxVolume:       maxVolume,
-		SettlementFrom:  req.GetSettlementFrom(),
-		SettlementTo:    req.GetSettlementTo(),
-		SortBy:          req.GetSortBy(),
-		SortOrder:       req.GetSortOrder(),
-		Page:            req.GetPage(),
-		PageSize:        req.GetPageSize(),
+		ListingType:    req.GetListingType(),
+		Search:         req.GetSearch(),
+		MinPrice:       minPrice,
+		MaxPrice:       maxPrice,
+		MinVolume:      minVolume,
+		MaxVolume:      maxVolume,
+		SettlementFrom: req.GetSettlementFrom(),
+		SettlementTo:   req.GetSettlementTo(),
+		SortBy:         req.GetSortBy(),
+		SortOrder:      req.GetSortOrder(),
+		Page:           req.GetPage(),
+		PageSize:       req.GetPageSize(),
+	}
+
+	// Klijenti mogu da vide i trguju samo akcijama i futures-ima (spec §2)
+	if claims != nil && claims.UserType == "CLIENT" {
+		filter.AllowedListingTypes = []string{
+			string(domain.ListingTypeStock),
+			string(domain.ListingTypeFuture),
+		}
 	}
 
 	listings, total, err := h.listingService.ListListings(ctx, filter)

@@ -2,11 +2,14 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
+	"time"
 
 	pb "banka-backend/proto/banka"
 	auth "banka-backend/shared/auth"
+	"banka-backend/services/bank-service/internal/domain"
 	"banka-backend/services/bank-service/internal/trading"
 
 	"github.com/shopspring/decimal"
@@ -62,8 +65,11 @@ func tradingError(err error) error {
 	case errors.Is(err, trading.ErrLimitPriceRequired),
 		errors.Is(err, trading.ErrStopPriceRequired),
 		errors.Is(err, trading.ErrInvalidOrderType),
-		errors.Is(err, trading.ErrInvalidDirection):
+		errors.Is(err, trading.ErrInvalidDirection),
+		errors.Is(err, trading.ErrListingTypeNotAllowed):
 		return status.Error(codes.InvalidArgument, err.Error())
+	case errors.Is(err, trading.ErrSettlementDatePassed):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	default:
 		return status.Errorf(codes.Internal, "interna greška: %v", err)
 	}
@@ -150,9 +156,20 @@ func (h *BankHandler) TradingCreateOrder(ctx context.Context, req *pb.TradingCre
 		return nil, status.Errorf(codes.Internal, "neispravan korisnički ID u tokenu: %v", err)
 	}
 
+	// Resolve accountId: employees trade from the bank's USD trezor account.
+	// The frontend sends accountId=0 for employees; we resolve the real ID here.
+	accountID := req.GetAccountId()
+	if accountID == 0 && claims.UserType == "EMPLOYEE" {
+		accounts, lookupErr := h.accountService.GetAllAccounts(ctx, "666000122200000008")
+		if lookupErr != nil || len(accounts) == 0 {
+			return nil, status.Error(codes.Internal, "bankin USD trezor račun nije pronađen")
+		}
+		accountID = accounts[0].ID
+	}
+
 	domainReq := &trading.CreateOrderRequest{
 		UserID:       userID,
-		AccountID:    req.GetAccountId(),
+		AccountID:    accountID,
 		ListingID:    req.GetListingId(),
 		OrderType:    trading.OrderType(req.GetOrderType()),
 		Direction:    trading.OrderDirection(req.GetDirection()),
@@ -175,11 +192,61 @@ func (h *BankHandler) TradingCreateOrder(ctx context.Context, req *pb.TradingCre
 	}
 	domainReq.StopPrice = sp
 
+	// ── Listing-level validations ─────────────────────────────────────────────
+	// Fetch listing once for all checks so we avoid multiple round-trips.
+	listing, err := h.listingService.GetListingByID(ctx, domainReq.ListingID)
+	if err != nil {
+		if errors.Is(err, domain.ErrListingNotFound) {
+			return nil, status.Errorf(codes.NotFound, "hartija od vrednosti nije pronađena: %d", domainReq.ListingID)
+		}
+		return nil, status.Errorf(codes.Internal, "greška pri dohvatu hartije: %v", err)
+	}
+
+	// Klijenti mogu trgovati samo akcijama i futures-ima (spec §2).
+	if claims.UserType == "CLIENT" {
+		if listing.ListingType != domain.ListingTypeStock && listing.ListingType != domain.ListingTypeFuture {
+			return nil, tradingError(trading.ErrListingTypeNotAllowed)
+		}
+	}
+
+	// Automatsko odbijanje za istekle FUTURE/OPTION instrumente (spec §7).
+	if listing.ListingType == domain.ListingTypeFuture || listing.ListingType == domain.ListingTypeOption {
+		if expired := settlementDateExpired(listing.DetailsJSON); expired {
+			return nil, tradingError(trading.ErrSettlementDatePassed)
+		}
+	}
+
+	// AfterHours detekcija: ako je berza zatvorena ili u after-hours periodu (spec §7).
+	// Frontend šalje false po defaultu; server uvek overriduje sa tačnom vrijednošću.
+	if marketStatus, msErr := h.berzaService.IsExchangeOpen(ctx, listing.ExchangeID); msErr == nil {
+		domainReq.AfterHours = marketStatus == domain.MarketStatusAfterHours ||
+			marketStatus == domain.MarketStatusClosed
+	}
+
 	order, err := h.tradingService.CreateOrder(ctx, domainReq)
 	if err != nil {
 		return nil, tradingError(err)
 	}
 	return &pb.TradingCreateOrderResponse{Order: orderToPb(*order)}, nil
+}
+
+// settlementDateExpired returns true when the settlement_date in details_json
+// is in the past.  Returns false if the field is missing or cannot be parsed
+// (conservative: don't block orders on parse failures).
+func settlementDateExpired(detailsJSON string) bool {
+	var details struct {
+		SettlementDate string `json:"settlement_date"`
+	}
+	if err := json.Unmarshal([]byte(detailsJSON), &details); err != nil || details.SettlementDate == "" {
+		return false
+	}
+	// Accept both date-only and full RFC3339 formats.
+	for _, layout := range []string{"2006-01-02", time.RFC3339} {
+		if t, err := time.Parse(layout, details.SettlementDate); err == nil {
+			return t.Before(time.Now().UTC())
+		}
+	}
+	return false
 }
 
 // =============================================================================

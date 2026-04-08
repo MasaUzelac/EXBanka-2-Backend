@@ -9,8 +9,6 @@ import (
 	"banka-backend/services/bank-service/internal/domain"
 )
 
-// taxConstant predstavlja porez na dobit koji se oduzima od cene pri kalkulacijama.
-const taxConstant = 0.15
 
 // listingService implementira domain.ListingService.
 type listingService struct {
@@ -61,19 +59,18 @@ func (s *listingService) GetListingHistory(ctx context.Context, id int64, from, 
 // calculate izračunava sve izvedene vrednosti za datu hartiju.
 // change = price_change iz poslednjeg dnevnog zapisa (0 ako nema istorije).
 func calculate(l domain.Listing, change float64) domain.ListingCalculated {
-	taxedPrice := l.Price - taxConstant
 	cs, mm := contractSizeAndMargin(l)
 
 	changePercent := 0.0
-	if denom := l.Price - change; denom != 0 {
-		changePercent = 100 * (change - taxConstant) / denom
+	if prev := l.Price - change; prev != 0 {
+		changePercent = 100 * change / prev
 	}
 
 	return domain.ListingCalculated{
 		Listing:           l,
 		ChangePercent:     changePercent,
-		DollarVolume:      float64(l.Volume) * taxedPrice,
-		NominalValue:      cs * taxedPrice,
+		DollarVolume:      float64(l.Volume) * l.Price,
+		NominalValue:      cs * l.Price,
 		ContractSize:      cs,
 		MaintenanceMargin: mm,
 		InitialMarginCost: mm * 1.1,
@@ -101,8 +98,7 @@ func contractSizeAndMargin(l domain.Listing) (contractSize, maintenanceMargin fl
 		if contractSize == 0 {
 			contractSize = 1
 		}
-		taxedPrice := l.Price - taxConstant
-		maintenanceMargin = contractSize * taxedPrice * 0.1
+		maintenanceMargin = contractSize * l.Price * 0.1
 
 	case domain.ListingTypeOption:
 		contractSize = 100

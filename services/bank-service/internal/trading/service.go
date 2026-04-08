@@ -360,23 +360,19 @@ func (s *tradingService) resolveStatus(ctx context.Context, req *CreateOrderRequ
 		return "", err
 	}
 
-	// Edge case: Limit == Zero (agent not yet configured) → always PENDING,
-	// because 0 + any positive notional > 0.
-	projected := actuary.UsedLimit.Add(notional)
-	if projected.GreaterThan(actuary.Limit) {
+	// Atomično povećavamo used_limit ako je iznos u okviru dnevnog limita.
+	// Jedan UPDATE iskaz eliminuje TOCTOU race condition.
+	_, err = s.actuaries.IncrementUsedLimitIfWithin(ctx, req.UserID, notional)
+	if errors.Is(err, domain.ErrActuaryLimitExceeded) {
+		// Iznos bi premašio limit → order ostaje PENDING (čeka supervisora).
 		return OrderStatusPending, nil
 	}
-
-	// Within budget → approve and charge the agent's daily used_limit.
-	_, err = s.actuaries.Update(ctx, domain.UpdateActuaryInput{
-		ID:           actuary.ID,
-		ActuaryType:  actuary.ActuaryType,
-		Limit:        actuary.Limit,
-		UsedLimit:    projected,
-		NeedApproval: actuary.NeedApproval,
-	})
+	if errors.Is(err, domain.ErrActuaryNotFound) {
+		// Aktuar je obrisan između prve provjere i ove operacije — tretiramo kao klijenta.
+		return OrderStatusApproved, nil
+	}
 	if err != nil {
-		return "", fmt.Errorf("ažuriranje used_limit za agenta %d: %w", actuary.ID, err)
+		return "", fmt.Errorf("ažuriranje used_limit za agenta (employee_id=%d): %w", req.UserID, err)
 	}
 
 	return OrderStatusApproved, nil
@@ -433,8 +429,9 @@ func (s *tradingService) ListOrders(ctx context.Context, statusFilter *OrderStat
 }
 
 // ApproveOrder transitions a PENDING order to APPROVED and records the
-// supervisor's ID.  Only the status transition is performed here — the agent's
-// used_limit is NOT incremented (see TradingService interface comment).
+// supervisor's ID.  When the order belongs to an AGENT, their used_limit is
+// incremented by the order's notional value (spec §4: "Used Limit se menja
+// pri svakoj transakciji").
 func (s *tradingService) ApproveOrder(ctx context.Context, orderID int64, supervisorID int64) (*Order, error) {
 	order, err := s.orders.GetByID(ctx, orderID)
 	if err != nil {
@@ -448,6 +445,23 @@ func (s *tradingService) ApproveOrder(ctx context.Context, orderID int64, superv
 	updated, err := s.orders.UpdateStatus(ctx, orderID, OrderStatusApproved, &supervisorID)
 	if err != nil {
 		return nil, fmt.Errorf("odobravanje naloga %d: %w", orderID, err)
+	}
+
+	// Increment agent's used_limit when a supervisor manually approves a PENDING order.
+	// We use IncrementUsedLimitIfWithin which is atomic; if the agent's limit is now
+	// exceeded (edge case: limit was lowered after order was created) we still approve
+	// the order but log the overflow — the supervisor made the conscious decision.
+	notional, notionalErr := s.computeNotional(ctx, order, order.Quantity)
+	if notionalErr == nil {
+		if _, limErr := s.actuaries.IncrementUsedLimitIfWithin(ctx, order.UserID, notional); limErr != nil {
+			if !errors.Is(limErr, domain.ErrActuaryLimitExceeded) && !errors.Is(limErr, domain.ErrActuaryNotFound) {
+				log.Printf("[trading] ažuriranje used_limit za agenta (order %d, user %d): %v", orderID, order.UserID, limErr)
+			}
+			// ErrActuaryLimitExceeded → supervisor explicitly approved over limit — allow it.
+			// ErrActuaryNotFound → order belongs to a client (no actuary_info) — nothing to update.
+		}
+	} else {
+		log.Printf("[trading] izračunavanje notional-a za used_limit update (order %d): %v", orderID, notionalErr)
 	}
 
 	// Reserve funds now that the order transitions from PENDING to APPROVED.

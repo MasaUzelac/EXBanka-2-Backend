@@ -19,12 +19,13 @@ import (
 // =============================================================================
 
 type actuaryRepository struct {
-	q *sqlc.Queries
+	q  *sqlc.Queries
+	db *sql.DB
 }
 
 // NewActuaryRepository constructs the repository from a standard *sql.DB.
 func NewActuaryRepository(db *sql.DB) domain.ActuaryRepository {
-	return &actuaryRepository{q: sqlc.New(db)}
+	return &actuaryRepository{q: sqlc.New(db), db: db}
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -158,5 +159,65 @@ func (r *actuaryRepository) ResetAllUsedLimits(ctx context.Context) error {
 		return fmt.Errorf("reset all agents used_limit: %w", err)
 	}
 	return nil
+}
+
+// ─── IncrementUsedLimitIfWithin ───────────────────────────────────────────────
+
+// IncrementUsedLimitIfWithin atomski povećava used_limit za agenta SAMO ako
+// (used_limit + amount) <= limit. Jedan UPDATE iskaz eliminuje TOCTOU race.
+//
+// Vraća ErrActuaryLimitExceeded ako uslov nije ispunjen (0 redova ažurirano).
+// Vraća ErrActuaryNotFound ako agent ne postoji u bazi.
+func (r *actuaryRepository) IncrementUsedLimitIfWithin(ctx context.Context, employeeID int64, amount decimal.Decimal) (*domain.Actuary, error) {
+	amountStr := amount.StringFixed(2)
+
+	row := r.db.QueryRowContext(ctx, `
+		UPDATE core_banking.actuary_info
+		SET    used_limit = used_limit + $1::numeric,
+		       updated_at = NOW()
+		WHERE  employee_id = $2
+		  AND  actuary_type = 'AGENT'
+		  AND  used_limit + $1::numeric <= limit
+		RETURNING id, employee_id, actuary_type, "limit", used_limit, need_approval, created_at, updated_at
+	`, amountStr, employeeID)
+
+	var (
+		id          int64
+		empID       int64
+		actuaryType string
+		lim         string
+		usedLim     string
+		needApproval bool
+		createdAt   interface{}
+		updatedAt   interface{}
+	)
+	err := row.Scan(&id, &empID, &actuaryType, &lim, &usedLim, &needApproval, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Either limit exceeded OR employee not found — disambiguate.
+		var exists bool
+		_ = r.db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM core_banking.actuary_info WHERE employee_id = $1 AND actuary_type = 'AGENT')`,
+			employeeID).Scan(&exists)
+		if !exists {
+			return nil, domain.ErrActuaryNotFound
+		}
+		return nil, domain.ErrActuaryLimitExceeded
+	}
+	if err != nil {
+		return nil, fmt.Errorf("increment used_limit for employee %d: %w", employeeID, err)
+	}
+
+	limDec, _ := decimal.NewFromString(lim)
+	usedDec, _ := decimal.NewFromString(usedLim)
+
+	a := &domain.Actuary{
+		ID:           id,
+		EmployeeID:   empID,
+		ActuaryType:  domain.ActuaryType(actuaryType),
+		Limit:        limDec,
+		UsedLimit:    usedDec,
+		NeedApproval: needApproval,
+	}
+	return a, nil
 }
 
