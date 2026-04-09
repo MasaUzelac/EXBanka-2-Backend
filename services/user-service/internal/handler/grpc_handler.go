@@ -1221,9 +1221,9 @@ func (h *UserHandler) GetClientByID(ctx context.Context, req *pb.GetClientByIDRe
 //
 // Mapped to: GET /client
 func (h *UserHandler) ListClients(ctx context.Context, req *pb.ListClientsRequest) (*pb.ListClientsResponse, error) {
-	// ── 1. Authorization — EMPLOYEE only ──────────────────────────────────────
+	// ── 1. Authorization — EMPLOYEE or ADMIN ──────────────────────────────────
 	claims, ok := auth.ClaimsFromContext(ctx)
-	if !ok || claims.UserType != "EMPLOYEE" {
+	if !ok || (claims.UserType != "EMPLOYEE" && claims.UserType != "ADMIN") {
 		return nil, status.Errorf(codes.PermissionDenied, "only employees can list clients")
 	}
 

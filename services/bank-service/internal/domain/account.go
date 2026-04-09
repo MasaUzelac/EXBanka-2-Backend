@@ -230,6 +230,10 @@ type AccountRepository interface {
 
 	// VerifyAndApplyLimit proverava kod i primenjuje promenu limita.
 	VerifyAndApplyLimit(ctx context.Context, input VerifyLimitInput) error
+
+	// FindAccountIDByNumber vraća interni ID aktivnog računa sa datim brojem računa.
+	// Vraća 0 (bez greške) kada račun ne postoji.
+	FindAccountIDByNumber(ctx context.Context, brojRacuna string) (int64, error)
 }
 
 // AccountService definiše ugovor prema sloju poslovne logike.
@@ -245,4 +249,8 @@ type AccountService interface {
 	GetPendingAction(ctx context.Context, actionID, vlasnikID int64) (*PendingAction, error)
 	ApprovePendingAction(ctx context.Context, actionID, vlasnikID int64) (code string, expiresAt time.Time, err error)
 	VerifyAndApplyLimit(ctx context.Context, input VerifyLimitInput) error
+
+	// FindAccountIDByNumber vraća interni ID aktivnog računa sa datim brojem računa.
+	// Vraća 0 (bez greške) kada račun ne postoji.
+	FindAccountIDByNumber(ctx context.Context, brojRacuna string) (int64, error)
 }

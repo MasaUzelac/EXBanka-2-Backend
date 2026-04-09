@@ -196,6 +196,7 @@ func main() {
 
 	portfolioHandler := handler.NewPortfolioHandler(db, listingService, cfg.JWTAccessSecret)
 	taxHandler := handler.NewTaxHandler(db, exchangeService, cfg.JWTAccessSecret)
+	myOrdersHandler := handler.NewMyOrdersHandler(tradingService, cfg.JWTAccessSecret)
 	fundHandler := handler.NewFundHandler(db, exchangeService, cfg.JWTAccessSecret)
 
 	// ── 4. Auth interceptor ──────────────────────────────────────────────────
@@ -263,6 +264,7 @@ func main() {
 	httpMux.Handle("GET /bank/cards/my", klientKarticeHandler)                  // GET  /bank/cards/my (klijentske kartice)
 	httpMux.Handle("PATCH /bank/cards/{id}/block", klientKarticeHandler)        // PATCH /bank/cards/{id}/block (blokiranje)
 	httpMux.Handle("/bank/internal/actuary/", internalActuaryHandler)           // POST/DELETE — user-service interni pozivi
+	httpMux.Handle("GET /bank/trading/my-orders", myOrdersHandler)               // GET /bank/trading/my-orders — caller's own orders (all roles)
 	httpMux.Handle("/bank/portfolio/", portfolioHandler)                        // GET /bank/portfolio/my, POST /bank/portfolio/publish, POST /bank/portfolio/exercise
 	httpMux.Handle("/bank/tax/", taxHandler)                                    // GET /bank/tax/users, POST /bank/tax/calculate
 	httpMux.Handle("/bank/funds/", fundHandler)                                 // GET /bank/funds, POST /bank/funds/{id}/invest, POST /bank/funds/{id}/withdraw

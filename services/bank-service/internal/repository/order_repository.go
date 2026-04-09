@@ -116,6 +116,7 @@ func decimalToStr(d *decimal.Decimal) *string {
 
 // Create upisuje novi nalog u bazu. Status je određen od strane service sloja.
 func (r *orderRepository) Create(ctx context.Context, req trading.CreateOrderRequest, status trading.OrderStatus) (*trading.Order, error) {
+	now := time.Now().UTC()
 	m := orderModel{
 		UserID:            req.UserID,
 		AccountID:         req.AccountID,
@@ -132,6 +133,7 @@ func (r *orderRepository) Create(ctx context.Context, req trading.CreateOrderReq
 		AfterHours:        req.AfterHours,
 		AllOrNone:         req.AllOrNone,
 		Margin:            req.Margin,
+		LastModified:      now,
 	}
 	if err := r.db.WithContext(ctx).Create(&m).Error; err != nil {
 		return nil, fmt.Errorf("order create: %w", err)
@@ -197,13 +199,14 @@ func (r *orderRepository) UpdateRemainingPortions(ctx context.Context, id int64,
 }
 
 // ListByUserID vraća sve naloge korisnika, od najnovijeg.
-func (r *orderRepository) ListByUserID(ctx context.Context, userID int64) ([]trading.Order, error) {
+// Ako je statusFilter != nil, rezultati se filtriraju po statusu.
+func (r *orderRepository) ListByUserID(ctx context.Context, userID int64, statusFilter *trading.OrderStatus) ([]trading.Order, error) {
+	q := r.db.WithContext(ctx).Where("user_id = ?", userID).Order("created_at DESC")
+	if statusFilter != nil {
+		q = q.Where("status = ?", string(*statusFilter))
+	}
 	var models []orderModel
-	err := r.db.WithContext(ctx).
-		Where("user_id = ?", userID).
-		Order("created_at DESC").
-		Find(&models).Error
-	if err != nil {
+	if err := q.Find(&models).Error; err != nil {
 		return nil, fmt.Errorf("order list by user: %w", err)
 	}
 	return modelsToOrders(models), nil

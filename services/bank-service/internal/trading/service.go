@@ -333,6 +333,13 @@ func (s *tradingService) validateMargin(ctx context.Context, req *CreateOrderReq
 // A SELECT FOR UPDATE or an atomic counter must be introduced before this path
 // goes to production.
 func (s *tradingService) resolveStatus(ctx context.Context, req *CreateOrderRequest) (OrderStatus, error) {
+	// JWT permissions are the authoritative source: if the caller holds the
+	// SUPERVISOR role (or is an ADMIN), auto-approve regardless of the DB state.
+	// This prevents stale actuary_info records from blocking legitimate supervisors.
+	if req.IsSupervisor {
+		return OrderStatusApproved, nil
+	}
+
 	actuary, err := s.actuaries.GetByEmployeeID(ctx, req.UserID)
 
 	if errors.Is(err, domain.ErrActuaryNotFound) {
@@ -424,6 +431,15 @@ func (s *tradingService) ListOrders(ctx context.Context, statusFilter *OrderStat
 	orders, err := s.orders.ListByStatus(ctx, statusFilter)
 	if err != nil {
 		return nil, fmt.Errorf("listanje naloga: %w", err)
+	}
+	return orders, nil
+}
+
+// ListOrdersByUser returns orders belonging to a single user, newest first.
+func (s *tradingService) ListOrdersByUser(ctx context.Context, userID int64, statusFilter *OrderStatus) ([]Order, error) {
+	orders, err := s.orders.ListByUserID(ctx, userID, statusFilter)
+	if err != nil {
+		return nil, fmt.Errorf("listanje naloga korisnika: %w", err)
 	}
 	return orders, nil
 }

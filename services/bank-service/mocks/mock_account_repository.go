@@ -74,3 +74,8 @@ func (m *MockAccountRepository) VerifyAndApplyLimit(ctx context.Context, input d
 	args := m.Called(ctx, input)
 	return args.Error(0)
 }
+
+func (m *MockAccountRepository) FindAccountIDByNumber(ctx context.Context, brojRacuna string) (int64, error) {
+	args := m.Called(ctx, brojRacuna)
+	return args.Get(0).(int64), args.Error(1)
+}

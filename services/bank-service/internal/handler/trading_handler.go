@@ -159,12 +159,28 @@ func (h *BankHandler) TradingCreateOrder(ctx context.Context, req *pb.TradingCre
 	// Resolve accountId: employees trade from the bank's USD trezor account.
 	// The frontend sends accountId=0 for employees; we resolve the real ID here.
 	accountID := req.GetAccountId()
-	if accountID == 0 && claims.UserType == "EMPLOYEE" {
-		accounts, lookupErr := h.accountService.GetAllAccounts(ctx, "666000122200000008")
-		if lookupErr != nil || len(accounts) == 0 {
-			return nil, status.Error(codes.Internal, "bankin USD trezor račun nije pronađen")
+	if accountID == 0 && (claims.UserType == "EMPLOYEE" || claims.UserType == "ADMIN") {
+		trezorID, lookupErr := h.accountService.FindAccountIDByNumber(ctx, "666000122200000008")
+		if lookupErr != nil {
+			return nil, status.Errorf(codes.Internal, "greška pri traženju trezor računa: %v", lookupErr)
 		}
-		accountID = accounts[0].ID
+		if trezorID == 0 {
+			return nil, status.Error(codes.Internal, "bankin USD trezor račun nije pronađen (broj: 666000122200000008)")
+		}
+		accountID = trezorID
+	}
+
+	// Determine supervisor status from JWT — the authoritative source.
+	// An ADMIN is always treated as a supervisor; for EMPLOYEE we check the
+	// permissions array for the "SUPERVISOR" permission.
+	isSupervisor := claims.UserType == "ADMIN"
+	if !isSupervisor {
+		for _, p := range claims.Permissions {
+			if p == "SUPERVISOR" {
+				isSupervisor = true
+				break
+			}
+		}
 	}
 
 	domainReq := &trading.CreateOrderRequest{
@@ -178,6 +194,7 @@ func (h *BankHandler) TradingCreateOrder(ctx context.Context, req *pb.TradingCre
 		AfterHours:   req.GetAfterHours(),
 		AllOrNone:    req.GetAllOrNone(),
 		Margin:       req.GetMargin(),
+		IsSupervisor: isSupervisor,
 	}
 
 	ppu, err := parseOptionalDecimal(req.PricePerUnit, "price_per_unit")
@@ -253,12 +270,16 @@ func settlementDateExpired(detailsJSON string) bool {
 // TradingListOrders
 // =============================================================================
 
-// TradingListOrders returns all orders with an optional status filter.
-// Auth: EMPLOYEE only (supervisor dashboard).
+// TradingListOrders returns orders with an optional status filter.
+// Auth:
+//   - EMPLOYEE / ADMIN → returns ALL orders (supervisor dashboard view).
+//   - CLIENT           → returns only the caller's own orders (Moji nalozi view).
+//
 // Mapped to: GET /bank/trading/orders
 func (h *BankHandler) TradingListOrders(ctx context.Context, req *pb.TradingListOrdersRequest) (*pb.TradingListOrdersResponse, error) {
-	if _, err := extractEmployeeID(ctx); err != nil {
-		return nil, err
+	claims, ok := auth.ClaimsFromContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "niste autentifikovani")
 	}
 
 	var statusFilter *trading.OrderStatus
@@ -267,7 +288,21 @@ func (h *BankHandler) TradingListOrders(ctx context.Context, req *pb.TradingList
 		statusFilter = &v
 	}
 
-	orders, err := h.tradingService.ListOrders(ctx, statusFilter)
+	var orders []trading.Order
+	var err error
+
+	if claims.UserType == "CLIENT" {
+		callerID, parseErr := strconv.ParseInt(claims.Subject, 10, 64)
+		if parseErr != nil {
+			return nil, status.Errorf(codes.Internal, "neispravan korisnički ID u tokenu: %v", parseErr)
+		}
+		orders, err = h.tradingService.ListOrdersByUser(ctx, callerID, statusFilter)
+	} else if claims.UserType == "EMPLOYEE" || claims.UserType == "ADMIN" {
+		orders, err = h.tradingService.ListOrders(ctx, statusFilter)
+	} else {
+		return nil, status.Error(codes.PermissionDenied, "pristup odbijen")
+	}
+
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "greška pri dohvatu naloga: %v", err)
 	}

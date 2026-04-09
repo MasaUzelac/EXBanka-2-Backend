@@ -237,6 +237,11 @@ type CreateOrderRequest struct {
 	AfterHours bool
 	AllOrNone  bool
 	Margin     bool
+
+	// IsSupervisor is derived from JWT claims (permissions contains "SUPERVISOR"
+	// or userType is "ADMIN"). When true, the order is auto-approved regardless
+	// of the actuary_info DB state, which may be stale or inconsistent.
+	IsSupervisor bool
 }
 
 // ─── External service interfaces ─────────────────────────────────────────────
@@ -315,7 +320,8 @@ type OrderRepository interface {
 	UpdateRemainingPortions(ctx context.Context, id int64, remaining int32, isDone bool) (*Order, error)
 
 	// ListByUserID returns all orders for a user, newest first.
-	ListByUserID(ctx context.Context, userID int64) ([]Order, error)
+	// Pass nil statusFilter to return orders of every status.
+	ListByUserID(ctx context.Context, userID int64, statusFilter *OrderStatus) ([]Order, error)
 
 	// ListByStatus returns all orders matching status, newest first.
 	// Pass nil to return orders of every status (supervisor overview).
@@ -408,6 +414,11 @@ type TradingService interface {
 	// Pass nil to return orders of every status (full supervisor overview).
 	// Pass &OrderStatusPending to list only orders awaiting approval.
 	ListOrders(ctx context.Context, statusFilter *OrderStatus) ([]Order, error)
+
+	// ListOrdersByUser returns orders belonging to a single user, newest first.
+	// Used by the client-facing "Moji nalozi" view.
+	// Pass nil statusFilter to return orders of every status.
+	ListOrdersByUser(ctx context.Context, userID int64, statusFilter *OrderStatus) ([]Order, error)
 
 	// ApproveOrder transitions a PENDING order to APPROVED and records the
 	// reviewing supervisor's ID in approved_by.

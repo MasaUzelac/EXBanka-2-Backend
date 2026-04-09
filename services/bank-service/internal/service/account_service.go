@@ -73,6 +73,10 @@ func (s *accountService) GetAllAccounts(ctx context.Context, brojRacunaFilter st
 	return s.repo.GetAllAccounts(ctx, brojRacunaFilter)
 }
 
+func (s *accountService) FindAccountIDByNumber(ctx context.Context, brojRacuna string) (int64, error) {
+	return s.repo.FindAccountIDByNumber(ctx, brojRacuna)
+}
+
 func (s *accountService) GetClientAccounts(ctx context.Context, vlasnikID int64) ([]domain.AccountListItem, error) {
 	return s.repo.GetClientAccounts(ctx, vlasnikID)
 }

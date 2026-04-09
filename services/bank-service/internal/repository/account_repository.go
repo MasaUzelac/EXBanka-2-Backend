@@ -295,6 +295,20 @@ func (r *accountRepository) GetAllAccounts(ctx context.Context, brojRacunaFilter
 	return items, nil
 }
 
+// FindAccountIDByNumber vraća interni ID aktivnog računa sa tačno zadatim brojem.
+// Vraća 0 (bez greške) ako račun ne postoji ili nije aktivan.
+func (r *accountRepository) FindAccountIDByNumber(ctx context.Context, brojRacuna string) (int64, error) {
+	var id int64
+	err := r.db.WithContext(ctx).Raw(
+		`SELECT id FROM core_banking.racun WHERE broj_racuna = ? AND status = 'AKTIVAN' LIMIT 1`,
+		brojRacuna,
+	).Scan(&id).Error
+	if err != nil {
+		return 0, fmt.Errorf("dohvat ID računa %s: %w", brojRacuna, err)
+	}
+	return id, nil
+}
+
 // GetClientAccounts vraća aktivne račune klijenta sortirane po raspoloživom stanju DESC.
 func (r *accountRepository) GetClientAccounts(ctx context.Context, vlasnikID int64) ([]domain.AccountListItem, error) {
 	var rows []accountListRow

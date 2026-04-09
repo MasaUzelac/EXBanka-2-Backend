@@ -18,10 +18,10 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// extractEmployeeID čita korisnički ID iz JWT claims-a i proverava da je EMPLOYEE.
+// extractEmployeeID čita korisnički ID iz JWT claims-a i proverava da je EMPLOYEE ili ADMIN.
 func extractEmployeeID(ctx context.Context) (int64, error) {
 	claims, ok := auth.ClaimsFromContext(ctx)
-	if !ok || claims.UserType != "EMPLOYEE" {
+	if !ok || (claims.UserType != "EMPLOYEE" && claims.UserType != "ADMIN") {
 		return 0, status.Error(codes.PermissionDenied, "samo zaposleni mogu pristupiti ovom resursu")
 	}
 	id, err := strconv.ParseInt(claims.Subject, 10, 64)

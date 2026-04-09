@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"errors"
-	"log"
 	"strconv"
 
 	pb "banka-backend/proto/actuary"
@@ -71,28 +70,23 @@ func extractActuaryEmployeeID(ctx context.Context) (int64, error) {
 	return id, nil
 }
 
-// requireSupervisor checks that the caller has a SUPERVISOR actuary record.
+// requireSupervisor checks that the caller is ADMIN or has SUPERVISOR permission in their JWT.
 func (h *ActuaryHandler) requireSupervisor(ctx context.Context) error {
-	employeeID, err := extractActuaryEmployeeID(ctx)
-	if err != nil {
-		log.Printf("[actuary] requireSupervisor: nije moguće izvući employee_id iz tokena: %v", err)
-		return err
+	claims, ok := auth.ClaimsFromContext(ctx)
+	if !ok {
+		return status.Error(codes.Unauthenticated, "nedostaju JWT claims")
 	}
-	log.Printf("[actuary] requireSupervisor: proverava employee_id=%d", employeeID)
-	a, err := h.service.GetActuaryByEmployeeID(ctx, employeeID)
-	if errors.Is(err, domain.ErrActuaryNotFound) {
-		log.Printf("[actuary] requireSupervisor: employee_id=%d nema zapis u actuary_info", employeeID)
-		return status.Error(codes.PermissionDenied, "korisnik nije registrovan kao aktuar")
+	// ADMIN always has access.
+	if claims.UserType == "ADMIN" {
+		return nil
 	}
-	if err != nil {
-		log.Printf("[actuary] requireSupervisor: DB greška za employee_id=%d: %v", employeeID, err)
-		return status.Errorf(codes.Internal, "greška pri proveri uloge aktuara: %v", err)
+	// For employees, check the SUPERVISOR permission in the JWT.
+	for _, p := range claims.Permissions {
+		if p == "SUPERVISOR" {
+			return nil
+		}
 	}
-	log.Printf("[actuary] requireSupervisor: employee_id=%d pronađen kao actuary_type=%s", employeeID, a.ActuaryType)
-	if a.ActuaryType != domain.ActuaryTypeSupervisor {
-		return status.Error(codes.PermissionDenied, domain.ErrNotSupervisor.Error())
-	}
-	return nil
+	return status.Error(codes.PermissionDenied, domain.ErrNotSupervisor.Error())
 }
 
 // ─── RPC: GetMyActuaryInfo ────────────────────────────────────────────────────
@@ -219,6 +213,12 @@ func (h *ActuaryHandler) CreateAgent(ctx context.Context, req *pb.CreateAgentReq
 	}
 	if req.EmployeeId == 0 {
 		return nil, status.Error(codes.InvalidArgument, "employee_id je obavezan")
+	}
+
+	// Reject if the target employee already has a SUPERVISOR actuary record.
+	existing, err := h.service.GetActuaryByEmployeeID(ctx, req.EmployeeId)
+	if err == nil && existing.ActuaryType == domain.ActuaryTypeSupervisor {
+		return nil, status.Error(codes.InvalidArgument, "supervizori ne mogu biti dodati kao agenti")
 	}
 
 	a, err := h.service.CreateActuaryForEmployee(ctx, req.EmployeeId, domain.ActuaryTypeAgent)

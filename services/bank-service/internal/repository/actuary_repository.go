@@ -177,7 +177,7 @@ func (r *actuaryRepository) IncrementUsedLimitIfWithin(ctx context.Context, empl
 		       updated_at = NOW()
 		WHERE  employee_id = $2
 		  AND  actuary_type = 'AGENT'
-		  AND  used_limit + $1::numeric <= limit
+		  AND  used_limit + $1::numeric <= "limit"
 		RETURNING id, employee_id, actuary_type, "limit", used_limit, need_approval, created_at, updated_at
 	`, amountStr, employeeID)
 
